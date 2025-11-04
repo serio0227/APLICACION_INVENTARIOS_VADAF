@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import hashlib # Mantenido por si se usa en el futuro, aunque no para login
 import io
-from datetime import datetime
+from datetime import datetime, timedelta # Importamos timedelta para el dashboard
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -117,6 +117,13 @@ def load_css():
         .stock-critical { color: var(--danger-color); font-weight: bold; }
         .stock-low { color: var(--warning-color); font-weight: bold; }
         .stock-ok { color: var(--success-color); font-weight: bold; }
+
+        /* Estilo de Tarjetas KPI para el dashboard */
+        [data-testid="stVerticalBlock"] > div:nth-child(1) .stMarkdown {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -204,65 +211,135 @@ def db_execute(query, params=()):
 # --- Funciones de las Páginas ---
 
 def show_dashboard():
-    """Muestra el panel principal (Tablero de control)."""
-    st.title("👟 Panel Principal - Inventarios VADAF")
+    """Muestra el panel principal (Tablero de control) estilo Power BI."""
+    st.title("👟 Dashboard Analítico de Inventarios VADAF")
     
-    # Cargar datos
+    # --- Cargar Datos Principales ---
     df_products = db_fetch("SELECT * FROM products")
+    df_movements = db_fetch("SELECT * FROM movements ORDER BY date DESC")
     
     if df_products.empty:
         st.info("No hay productos en el inventario. Agregue productos en 'Gestión de Productos'.")
         return
 
-    # 1. Métricas Clave
-    total_items = df_products['quantity'].sum()
-    total_value = (df_products['quantity'] * df_products['unit_cost']).sum()
-    total_skus = len(df_products)
-    
+    # Preparación de datos (KPIs y Estados)
+    df_products['Valor_Total'] = df_products['quantity'] * df_products['unit_cost']
     df_products['stock_status'] = df_products.apply(
         lambda row: 'Crítico' if row['quantity'] < row['min_stock'] 
                     else ('Bajo' if row['quantity'] <= row['min_stock'] * 1.2 
                           else 'Óptimo'), 
         axis=1
     )
-    low_stock_count = len(df_products[df_products['stock_status'].isin(['Crítico', 'Bajo'])])
+    
+    # 1. FILTROS INTERACTIVOS (Sidebar)
+    with st.sidebar:
+        st.subheader("Filtros del Dashboard")
+        all_categories = df_products['category'].unique().tolist()
+        selected_categories = st.multiselect(
+            "Filtrar por Categoría", 
+            options=all_categories, 
+            default=all_categories
+        )
+
+    df_filtered = df_products[df_products['category'].isin(selected_categories)]
+    
+    # Verificar si el filtro ha dejado el DF vacío
+    if df_filtered.empty:
+        st.warning("No hay datos para las categorías seleccionadas.")
+        return
+
+    # --- 2. TARJETAS DE MÉTRICAS (KPIs) ---
+    st.header("Métricas Clave (KPIs)")
+    
+    total_items = df_filtered['quantity'].sum()
+    total_value = df_filtered['Valor_Total'].sum()
+    total_skus = len(df_filtered)
+    low_stock_count = len(df_filtered[df_filtered['stock_status'].isin(['Crítico', 'Bajo'])])
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Valor Total del Inventario", f"${total_value:,.2f}")
-    col2.metric("Total de Artículos", f"{total_items:,}")
-    col3.metric("Total de SKUs", f"{total_skus}")
-    col4.metric("SKUs con Bajo Inventario", f"{low_stock_count}", delta_color="inverse")
-
-    st.markdown("---")
-
-    # 2. Alertas de Bajo Inventario
-    st.subheader("⚠️ Alertas de Bajo Inventario")
-    low_stock_products = df_products[df_products['stock_status'].isin(['Crítico', 'Bajo'])].sort_values(by='quantity')
-    
-    if low_stock_products.empty:
-        st.success("¡Todo en orden! No hay productos con bajo inventario.")
-    else:
-        for _, row in low_stock_products.iterrows():
-            level = row['stock_status']
-            if level == 'Crítico':
-                st.error(f"**CRÍTICO:** {row['name']} (Código: {row['code']}) - Quedan: {row['quantity']} (Mínimo: {row['min_stock']})")
-            elif level == 'Bajo':
-                st.warning(f"**BAJO:** {row['name']} (Código: {row['code']}) - Quedan: {row['quantity']} (Mínimo: {row['min_stock']})")
-
-    st.markdown("---")
-
-    # 3. Gráficas Simples
-    col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Inventario por Categoría (Cantidad)")
-        stock_by_cat = df_products.groupby('category')['quantity'].sum()
-        st.bar_chart(stock_by_cat, color="#007bff") # Corregido
-
+        st.container()
+        st.info("Valor Total Inventario")
+        st.markdown(f"## **${total_value:,.0f}**")
+        
     with col2:
-        st.subheader("Inventario por Categoría (Valor)")
-        stock_value_by_cat = (df_products['quantity'] * df_products['unit_cost']).groupby(df_products['category']).sum()
-        st.bar_chart(stock_value_by_cat, color="#0056b3") # Corregido
+        st.container()
+        st.info("Total Unidades")
+        st.markdown(f"## **{total_items:,}**")
+
+    with col3:
+        st.container()
+        st.warning("SKUs con Bajo Stock")
+        st.markdown(f"## **{low_stock_count}**")
+        
+    with col4:
+        st.container()
+        avg_cost = df_filtered['unit_cost'].mean() if not df_filtered['unit_cost'].empty else 0
+        st.success("Costo Promedio Unitario")
+        st.markdown(f"## **${avg_cost:,.2f}**")
+
+    st.markdown("---")
+
+    # --- 3. GRÁFICOS ANALÍTICOS Y VISUALIZACIONES ---
+    st.header("Análisis de Existencias y Valor")
+
+    c1, c2 = st.columns(2)
+    
+    # Gráfico 1: Stock por Categoría (Cantidad)
+    with c1:
+        st.subheader("1. Stock por Categoría (Unidades)")
+        stock_by_cat = df_filtered.groupby('category')['quantity'].sum().sort_values(ascending=False)
+        st.bar_chart(stock_by_cat, color="#007bff")
+
+    # Gráfico 2: Valor por Categoría
+    with c2:
+        st.subheader("2. Valor por Categoría ($)")
+        stock_value_by_cat = df_filtered.groupby('category')['Valor_Total'].sum().sort_values(ascending=False)
+        st.bar_chart(stock_value_by_cat, color="#0056b3")
+        
+    st.markdown("---")
+
+    # Gráfico 3: Productos Críticos (Tabla/Gráfico)
+    st.subheader("3. Top 10 Productos con Stock Crítico")
+    low_stock_products = df_filtered[df_filtered['stock_status'].isin(['Crítico', 'Bajo'])].sort_values(by='quantity').head(10)
+    
+    if low_stock_products.empty:
+        st.success("No hay productos en estado Crítico/Bajo en las categorías seleccionadas.")
+    else:
+        # Usamos un gráfico horizontal para mejor visualización de ranking
+        low_stock_products_chart = low_stock_products.set_index('name')['quantity']
+        low_stock_products_chart.name = "Unidades Actuales"
+        st.bar_chart(low_stock_products_chart, color="#d32f2f")
+
+
+    # Gráfico 4: Movimientos Históricos (Interactivo)
+    if not df_movements.empty:
+        st.markdown("---")
+        st.subheader("4. Tendencia de Movimientos de Inventario (Últimos 30 días)")
+        
+        # Filtro de fecha predeterminado: 30 días
+        df_movements['date'] = pd.to_datetime(df_movements['date'])
+        start_date = datetime.now() - timedelta(days=30)
+        df_movements_filtered = df_movements[df_movements['date'] >= start_date].copy()
+        
+        if not df_movements_filtered.empty:
+            # Agrupar por día
+            df_movements_filtered['day'] = df_movements_filtered['date'].dt.date
+            
+            # Pivotear para tener Entradas y Salidas en columnas separadas
+            df_pivot = df_movements_filtered.pivot_table(
+                index='day', 
+                columns='type', 
+                values='quantity', 
+                aggfunc='sum'
+            ).fillna(0)
+            
+            # Crear gráfico de líneas
+            st.line_chart(df_pivot, use_container_width=True, color=["#388e3c", "#d32f2f"]) # Entrada (Verde), Salida (Rojo)
+        else:
+            st.info("No hay movimientos registrados en los últimos 30 días para estas categorías.")
+
 
 def manage_products():
     """Página para la gestión (CRUD) de productos."""
@@ -529,12 +606,12 @@ def manage_suppliers():
     st.dataframe(df_suppliers, use_container_width=True)
 
 def show_reports():
-    """Página para generar y descargar reportes."""
+    """Página para generar y descargar reportes, con opción CSV/Excel y filtros."""
     st.title("📊 Generación de Reportes")
     
     report_type = st.selectbox(
         "Seleccione el tipo de reporte:",
-        ["Existencias Actuales", "Valor Total del Inventario", "Movimientos del Mes"]
+        ["Existencias Actuales", "Valor Total del Inventario", "Movimientos Históricos"]
     )
     
     df_report = pd.DataFrame()
@@ -545,12 +622,13 @@ def show_reports():
         SELECT 
             p.code AS 'Código', p.name AS 'Nombre', p.category AS 'Categoría',
             p.quantity AS 'Cantidad', p.min_stock AS 'Stock Mínimo', p.location AS 'Ubicación',
-            s.name AS 'Proveedor'
+            s.name AS 'Proveedor', p.unit_cost AS 'Costo Unitario'
         FROM products p
         LEFT JOIN suppliers s ON p.supplier_id = s.id
         ORDER BY p.name
         """
         df_report = db_fetch(query)
+        st.dataframe(df_report, use_container_width=True) # Mostrar aquí si no es el de valor
     
     elif report_type == "Valor Total del Inventario":
         st.subheader("Reporte de Valor Total del Inventario")
@@ -560,23 +638,36 @@ def show_reports():
             p.quantity AS 'Cantidad', p.unit_cost AS 'Costo Unitario',
             (p.quantity * p.unit_cost) AS 'Valor Total'
         FROM products p
-        ORDER BY 'Valor Total' DESC
+        ORDER BY "Valor Total" DESC
         """
         df_report = db_fetch(query)
         
-        # Añadir fila de total
+        # Añadir fila de total para la visualización
         total_value = df_report['Valor Total'].sum()
         total_row = pd.DataFrame({
             'Código': ['---'], 'Nombre': ['---'], 'Categoría': ['---'],
             'Cantidad': ['---'], 'Costo Unitario': ['**TOTAL**'], 
             'Valor Total': [f"**{total_value:,.2f}**"]
         })
-        df_report = pd.concat([df_report, total_row], ignore_index=True)
+        df_display = pd.concat([df_report, total_row], ignore_index=True)
+        st.dataframe(df_display, use_container_width=True) # Mostrar el display DF
 
-    elif report_type == "Movimientos del Mes":
-        st.subheader("Reporte de Movimientos del Mes Actual")
-        # (Esto asume SQLite, la sintaxis de fecha puede variar)
-        query = """
+    elif report_type == "Movimientos Históricos":
+        st.subheader("Reporte de Movimientos Históricos (Filtro por Fecha)")
+        
+        # Filtro de fecha
+        col_start, col_end = st.columns(2)
+        default_start = datetime.now().replace(day=1) # Primer día del mes
+        default_end = datetime.now()
+        
+        start_date = col_start.date_input("Fecha Inicio", value=default_start)
+        end_date = col_end.date_input("Fecha Fin", value=default_end)
+        
+        # Convertir a string para la consulta SQLite
+        start_str = start_date.strftime('%Y-%m-%d 00:00:00')
+        end_str = end_date.strftime('%Y-%m-%d 23:59:59')
+        
+        query = f"""
         SELECT 
             strftime('%Y-%m-%d %H:%M', m.date) AS 'Fecha',
             p.name AS 'Producto', p.code AS 'Código',
@@ -584,32 +675,47 @@ def show_reports():
             m.notes AS 'Observaciones'
         FROM movements m
         JOIN products p ON m.product_id = p.id
-        WHERE strftime('%Y-%m', m.date) = strftime('%Y-%m', 'now')
+        WHERE m.date BETWEEN '{start_str}' AND '{end_str}'
         ORDER BY m.date DESC
         """
         df_report = db_fetch(query)
+        st.dataframe(df_report, use_container_width=True) # Mostrar aquí
 
-    st.dataframe(df_report, use_container_width=True)
-    
     # --- Botones de Descarga ---
     if not df_report.empty:
         st.markdown("---")
         
-        # Descargar Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_report.to_excel(writer, index=False, sheet_name='Reporte')
-        
-        st.download_button(
-            label="📄 Descargar Reporte (Excel)",
-            data=output.getvalue(),
-            file_name=f"reporte_vadaf_{report_type.lower().replace(' ', '_')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        col_excel, col_csv = st.columns(2)
+
+        # Descargar Excel (Requiere 'openpyxl' instalado)
+        output_excel = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
+                # Nota: Si el reporte es 'Valor Total', df_report NO incluye la fila de total
+                df_report.to_excel(writer, index=False, sheet_name='Reporte')
+            
+            col_excel.download_button(
+                label="📄 Descargar Reporte (Excel)",
+                data=output_excel.getvalue(),
+                file_name=f"reporte_vadaf_{report_type.lower().replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except ImportError:
+            col_excel.info("Instale 'openpyxl' (`pip install openpyxl`) para habilitar la descarga a Excel.")
+
+        # Descargar CSV
+        csv = df_report.to_csv(index=False).encode('utf-8')
+        col_csv.download_button(
+            label="📄 Descargar Reporte (CSV)",
+            data=csv,
+            file_name=f"reporte_vadaf_{report_type.lower().replace(' ', '_')}.csv",
+            mime="text/csv",
         )
         
+        st.markdown("---")
         # Botón de impresión (simulado, solo muestra un mensaje)
         if st.button("🖨️ Imprimir Reporte (Simulación)"):
-            st.info("La función de impresión directa no está soportada. Por favor, use la función de impresión de su navegador (Ctrl+P) o descargue el Excel.")
+            st.info("La función de impresión directa no está soportada. Por favor, use la función de impresión de su navegador (Ctrl+P) o descargue el Excel/CSV.")
 
 # --- Lógica Principal (Main) ---
 
