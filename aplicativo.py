@@ -257,12 +257,12 @@ def show_dashboard():
     with col1:
         st.subheader("Inventario por Categoría (Cantidad)")
         stock_by_cat = df_products.groupby('category')['quantity'].sum()
-        st.bar_chart(stock_by_cat, color="var(--primary-color)")
+        st.bar_chart(stock_by_cat, color="#007bff") # Corregido
 
     with col2:
         st.subheader("Inventario por Categoría (Valor)")
         stock_value_by_cat = (df_products['quantity'] * df_products['unit_cost']).groupby(df_products['category']).sum()
-        st.bar_chart(stock_value_by_cat, color="var(--accent-color)")
+        st.bar_chart(stock_value_by_cat, color="#0056b3") # Corregido
 
 def manage_products():
     """Página para la gestión (CRUD) de productos."""
@@ -649,4 +649,3 @@ def run_main_app():
 if __name__ == "__main__":
     init_db() # Asegura que la BD y las tablas existan
     run_main_app() # Ejecuta la app directamente
-
