@@ -1,9 +1,8 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import hashlib # Mantenido por si se usa en el futuro, aunque no para login
 import io
-from datetime import datetime, timedelta # Importamos timedelta para el dashboard
+from datetime import datetime, timedelta
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -171,7 +170,7 @@ def init_db():
     )
     """)
     
-    # Tabla de Movimientos (Sin 'user')
+    # Tabla de Movimientos
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,7 +252,6 @@ def show_dashboard():
     
     total_items = df_filtered['quantity'].sum()
     total_value = df_filtered['Valor_Total'].sum()
-    total_skus = len(df_filtered)
     low_stock_count = len(df_filtered[df_filtered['stock_status'].isin(['Crítico', 'Bajo'])])
 
     col1, col2, col3, col4 = st.columns(4)
@@ -310,7 +308,7 @@ def show_dashboard():
         # Usamos un gráfico horizontal para mejor visualización de ranking
         low_stock_products_chart = low_stock_products.set_index('name')['quantity']
         low_stock_products_chart.name = "Unidades Actuales"
-        st.bar_chart(low_stock_products_chart, color="#d32f2f")
+        st.bar_chart(low_stock_products_chart, color="#d32f2f") # 
 
 
     # Gráfico 4: Movimientos Históricos (Interactivo)
@@ -343,7 +341,7 @@ def show_dashboard():
 
 def manage_products():
     """Página para la gestión (CRUD) de productos."""
-    st.title("📦 Gestión de Productos")
+    st.title("📦 Gestión de Productos: Crear, Editar y Eliminar")
     
     df_suppliers = db_fetch("SELECT id, name FROM suppliers")
     supplier_dict = pd.Series(df_suppliers['id'].values, index=df_suppliers['name']).to_dict()
@@ -351,46 +349,52 @@ def manage_products():
     
     categories = ['Materia Prima', 'Producto en Proceso', 'Producto Terminado']
 
-    # --- Formulario para Agregar/Editar ---
-    with st.expander("➕ Agregar Nuevo Producto", expanded=False):
+    # --- Formulario para Agregar (Ventana Emergente Simulado) ---
+    with st.expander("➕ Crear Nuevo Producto", expanded=False):
+        st.subheader("Datos de Creación Rápida")
         with st.form("new_product_form", clear_on_submit=True):
-            st.subheader("Nuevo Producto")
             
-            # Campos
-            code = st.text_input("Código (SKU) *", help="Debe ser único.")
-            name = st.text_input("Nombre del Producto *")
-            category = st.selectbox("Categoría *", categories)
+            # Col 1: Información básica
+            col1_1, col1_2, col1_3 = st.columns(3)
+            code = col1_1.text_input("Código (SKU) *", help="Debe ser único.")
+            name = col1_2.text_input("Nombre del Producto *")
+            category = col1_3.selectbox("Categoría *", categories)
             
-            c1, c2, c3 = st.columns(3)
-            shoe_type = c1.text_input("Tipo de Zapato (Ej: Bota, Sneaker)")
-            size = c2.text_input("Talla (Ej: 38, M)")
-            color = c3.text_input("Color (Ej: Negro)")
+            # Col 2: Especificaciones
+            col2_1, col2_2, col2_3 = st.columns(3)
+            shoe_type = col2_1.text_input("Tipo de Zapato")
+            size = col2_2.text_input("Talla/Medida")
+            color = col2_3.text_input("Color")
             
-            c4, c5, c6 = st.columns(3)
-            quantity = c4.number_input("Cantidad Inicial *", min_value=0, step=1)
-            min_stock = c5.number_input("Stock Mínimo (Alerta) *", min_value=0, step=1, value=10)
-            unit_cost = c6.number_input("Costo Unitario/Producción *", min_value=0.0, format="%.2f")
+            # Col 3: Stock y Costo
+            col3_1, col3_2, col3_3 = st.columns(3)
+            quantity = col3_1.number_input("Cantidad Inicial *", min_value=0, step=1)
+            min_stock = col3_2.number_input("Stock Mínimo (Alerta) *", min_value=0, step=1, value=10)
+            unit_cost = col3_3.number_input("Costo Unitario/Producción *", min_value=0.0, format="%.2f")
             
-            location = st.text_input("Ubicación en Almacén (Ej: Zona A, Estante 3)")
-            supplier_name = st.selectbox("Proveedor", supplier_names)
-            supplier_id = supplier_dict.get(supplier_name)
+            # Col 4: Ubicación y Proveedor
+            col4_1, col4_2 = st.columns(2)
+            location = col4_1.text_input("Ubicación en Almacén")
+            supplier_name = col4_2.selectbox("Proveedor", supplier_names)
             
-            submitted = st.form_submit_button("Guardar Producto")
+            submitted = st.form_submit_button("✅ Guardar Producto", type="primary")
             
             if submitted:
                 # Validación
                 if not code or not name or not category or quantity is None or min_stock is None or unit_cost is None:
                     st.error("Por favor complete todos los campos obligatorios (*).")
                 else:
+                    supplier_id_to_use = supplier_dict.get(supplier_name)
                     success, error = db_execute(
                         """
                         INSERT INTO products (code, name, category, shoe_type, size, color, quantity, min_stock, location, supplier_id, unit_cost)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (code, name, category, shoe_type, size, color, quantity, min_stock, location, supplier_id, unit_cost)
+                        (code, name, category, shoe_type, size, color, quantity, min_stock, location, supplier_id_to_use, unit_cost)
                     )
                     if success:
                         st.success(f"Producto '{name}' agregado exitosamente.")
+                        st.rerun()
                     else:
                         if "UNIQUE constraint failed" in error:
                             st.error(f"Error: El código '{code}' ya existe. Use un código único.")
@@ -399,8 +403,8 @@ def manage_products():
 
     st.markdown("---")
 
-    # --- Vista y Edición de Productos ---
-    st.subheader("Inventario Actual")
+    # --- Vista, Edición y Eliminación de Productos ---
+    st.subheader("Inventario Actual: Edición Rápida y Eliminación")
     
     # Cargar datos
     query = """
@@ -418,71 +422,114 @@ def manage_products():
         return
 
     # --- Filtros ---
-    c1, c2 = st.columns([2, 1])
-    search_term = c1.text_input("Buscar por Nombre o Código")
-    filter_category = c2.multiselect("Filtrar por Categoría", options=categories, default=categories)
+    col_search, col_filter = st.columns([2, 1])
+    search_term = col_search.text_input("Buscar por Nombre o Código")
+    filter_category = col_filter.multiselect("Filtrar por Categoría", options=categories, default=categories)
     
     filtered_df = df_products[
-        (df_products['name'].str.contains(search_term, case=False) | 
-         df_products['code'].str.contains(search_term, case=False)) &
+        (df_products['name'].str.contains(search_term, case=False, na=False) | 
+         df_products['code'].str.contains(search_term, case=False, na=False)) &
         (df_products['category'].isin(filter_category))
-    ]
+    ].copy() 
+    
+    # Agregar columna para eliminación
+    filtered_df['Eliminar'] = False
 
     # --- Mostrar Tabla (Editable) ---
-    st.info("Puede editar las celdas directamente. Los cambios se guardarán automáticamente (Función de Data Editor).")
+    st.info("Edite las columnas Nombre, Categoría, Cantidad, Stock Mínimo, Costo Unitario y detalles directamente. Marque 'Eliminar' para borrar filas.")
     
-    # Columnas editables
-    editable_columns = {
+    # Columnas editables y configuradas
+    column_config = {
+        "id": st.column_config.NumberColumn("ID", disabled=True),
+        "code": st.column_config.TextColumn("Código", disabled=True),
         "name": st.column_config.TextColumn("Nombre", required=True),
         "category": st.column_config.SelectboxColumn("Categoría", options=categories, required=True),
-        "quantity": st.column_config.NumberColumn("Cantidad", min_value=0, required=True),
-        "min_stock": st.column_config.NumberColumn("Stock Mínimo", min_value=0, required=True),
+        "quantity": st.column_config.NumberColumn("Cantidad", min_value=0, step=1, required=True),
+        "min_stock": st.column_config.NumberColumn("Stock Mínimo", min_value=0, step=1, required=True),
         "unit_cost": st.column_config.NumberColumn("Costo Unitario", min_value=0.0, format="%.2f", required=True),
         "shoe_type": st.column_config.TextColumn("Tipo Zapato"),
         "size": st.column_config.TextColumn("Talla"),
         "color": st.column_config.TextColumn("Color"),
         "location": st.column_config.TextColumn("Ubicación"),
-        # 'supplier_name' es más complejo de editar aquí, se deja como solo lectura
+        "supplier_name": st.column_config.TextColumn("Proveedor", disabled=True),
+        "Eliminar": st.column_config.CheckboxColumn("🗑️ Eliminar?", default=False),
     }
-    
-    # Columnas deshabilitadas
-    disabled_cols = ['id', 'code', 'supplier_name']
 
     # Usar st.data_editor para edición en vivo
     edited_data = st.data_editor(
         filtered_df,
-        column_config=editable_columns,
-        disabled=disabled_cols,
-        num_rows="dynamic", # Permitir añadir y eliminar filas
+        column_config=column_config,
+        hide_index=True,
         use_container_width=True,
-        on_change=st.cache_data.clear() # Limpiar cache en cambios
     )
     
-    # (Nota: La lógica completa para sincronizar st.data_editor (editar/añadir/borrar filas) 
-    # con la BD es compleja y requiere manejo de estado. 
-    # Esta versión permite la adición/eliminación visual, pero la persistencia
-    # principal sigue estando en el formulario "Agregar" y la sección "Eliminar".)
-
-    # --- Eliminación ---
-    st.markdown("---")
-    st.subheader("Eliminar Producto")
-    product_list = ["Seleccione un producto..."] + df_products['name'].tolist()
-    product_to_delete = st.selectbox("Producto a Eliminar", product_list)
+    # --- Lógica de Guardado y Eliminación de st.data_editor ---
     
-    if product_to_delete != "Seleccione un producto...":
-        product_id = df_products[df_products['name'] == product_to_delete]['id'].iloc[0]
-        if st.button(f"Eliminar {product_to_delete}", type="secondary"):
-            # (En una app real: Verificar si hay movimientos asociados)
-            success, error = db_execute("DELETE FROM products WHERE id = ?", (product_id,))
-            if success:
-                st.success(f"Producto '{product_to_delete}' eliminado.")
-                st.rerun()
-            else:
-                st.error(f"Error al eliminar: {error}")
+    if st.button("💾 Guardar Cambios y Procesar Eliminaciones", type="primary"):
+        st.subheader("Procesando Cambios...")
+        
+        # 1. Procesar Eliminaciones
+        items_to_delete = edited_data[edited_data['Eliminar'] == True]
+        if not items_to_delete.empty:
+            st.warning(f"Se eliminarán {len(items_to_delete)} producto(s).")
+            for index, row in items_to_delete.iterrows():
+                success, error = db_execute("DELETE FROM products WHERE id = ?", (row['id'],))
+                if success:
+                    st.success(f"Producto '{row['name']}' (ID: {row['id']}) ELIMINADO.")
+                else:
+                    st.error(f"Error al eliminar '{row['name']}': {error}")
+        
+        # 2. Procesar Ediciones (Solo los que NO están marcados para eliminar)
+        items_to_update = edited_data[edited_data['Eliminar'] == False]
+        
+        updated_count = 0
+        for index, new_row in items_to_update.iterrows():
+            original_row = df_products[df_products['id'] == new_row['id']].iloc[0]
+            
+            # Verificar si algún campo editable ha cambiado
+            is_modified = (
+                original_row['name'] != new_row['name'] or
+                original_row['category'] != new_row['category'] or
+                original_row['quantity'] != new_row['quantity'] or
+                original_row['min_stock'] != new_row['min_stock'] or
+                original_row['unit_cost'] != new_row['unit_cost'] or
+                original_row['shoe_type'] != new_row['shoe_type'] or
+                original_row['size'] != new_row['size'] or
+                original_row['color'] != new_row['color'] or
+                original_row['location'] != new_row['location']
+            )
+
+            if is_modified:
+                success, error = db_execute(
+                    """
+                    UPDATE products SET 
+                        name = ?, category = ?, quantity = ?, min_stock = ?, unit_cost = ?,
+                        shoe_type = ?, size = ?, color = ?, location = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        new_row['name'], new_row['category'], new_row['quantity'], 
+                        new_row['min_stock'], new_row['unit_cost'], new_row['shoe_type'], 
+                        new_row['size'], new_row['color'], new_row['location'], new_row['id']
+                    )
+                )
+                if success:
+                    updated_count += 1
+                else:
+                    st.error(f"Error al actualizar '{new_row['name']}': {error}")
+
+        if updated_count > 0 or not items_to_delete.empty:
+            st.success(f"Se procesaron {updated_count} actualizaciones y {len(items_to_delete)} eliminaciones.")
+            st.rerun()
+        
+        if items_to_delete.empty and updated_count == 0:
+            st.info("No se detectaron cambios ni eliminaciones por procesar.")
+
 
 def manage_movements():
-    """Página para registrar entradas y salidas de inventario."""
-    st.title("🚚 Gestión de Movimientos")
+    """Página para registrar entradas y salidas de inventario, actualizando el stock en tiempo real."""
+    st.title("🚚 Gestión de Movimientos: Entradas y Salidas")
+    st.info("Registrar un movimiento aquí actualiza el stock del producto de forma inmediata.")
     
     df_products = db_fetch("SELECT id, name, code, quantity FROM products")
     if df_products.empty:
@@ -492,51 +539,57 @@ def manage_movements():
     product_dict = pd.Series(df_products['id'].values, index=df_products['name']).to_dict()
     product_names = list(product_dict.keys())
 
-    # --- Formulario de Registro ---
+    # --- Formulario de Registro (Interactividad) ---
     with st.form("movement_form", clear_on_submit=True):
-        st.subheader("Registrar Movimiento")
+        st.subheader("Registrar Nueva Transacción")
         
         c1, c2 = st.columns(2)
-        product_name = c1.selectbox("Producto *", product_names)
-        movement_type = c2.radio("Tipo de Movimiento *", ['Entrada', 'Salida'])
+        product_name = c1.selectbox("Producto *", product_names, key="move_product")
+        movement_type = c2.radio("Tipo de Movimiento *", ['Entrada', 'Salida'], key="move_type")
         
-        quantity = st.number_input("Cantidad *", min_value=1, step=1)
-        notes = st.text_area("Observaciones (Ej: Venta #123, Compra a Proveedor X)")
+        current_stock_row = df_products[df_products['name'] == product_name]
+        current_stock = current_stock_row['quantity'].iloc[0] if not current_stock_row.empty else 0
         
-        submitted = st.form_submit_button("Registrar Movimiento")
+        st.markdown(f"**Stock Actual de {product_name}:** `{current_stock}`")
+
+        quantity = st.number_input("Cantidad *", min_value=1, step=1, key="move_qty")
+        notes = st.text_area("Observaciones (Ej: Venta #123, Devolución de Cliente, Compra a Proveedor X)", key="move_notes")
+        
+        submitted = st.form_submit_button("Registrar y Actualizar Stock", type="primary")
         
         if submitted:
             product_id = product_dict[product_name]
-            current_stock = df_products[df_products['id'] == product_id]['quantity'].iloc[0]
             
-            # Validación
+            # Validación de Stock (solo para Salida)
             if movement_type == 'Salida' and quantity > current_stock:
-                st.error(f"Error: No hay stock suficiente para '{product_name}'. Stock actual: {current_stock}")
+                st.error(f"⚠️ Error: Stock insuficiente para '{product_name}'. Stock actual: {current_stock}")
             else:
-                # 1. Registrar el movimiento (sin usuario)
+                # 1. Registrar el movimiento
                 success, error = db_execute(
                     "INSERT INTO movements (product_id, type, quantity, notes) VALUES (?, ?, ?, ?)",
                     (product_id, movement_type, quantity, notes)
                 )
-                if not success:
-                    st.error(f"Error al registrar movimiento: {error}")
-                    return
-
-                # 2. Actualizar el stock del producto
-                if movement_type == 'Entrada':
-                    new_stock = current_stock + quantity
-                else: # Salida
-                    new_stock = current_stock - quantity
                 
-                success_update, error_update = db_execute(
-                    "UPDATE products SET quantity = ? WHERE id = ?",
-                    (new_stock, product_id)
-                )
-                
-                if success_update:
-                    st.success(f"Movimiento '{movement_type}' de {quantity} unidad(es) de '{product_name}' registrado. Nuevo stock: {new_stock}")
+                if success:
+                    # 2. Actualizar el stock del producto
+                    if movement_type == 'Entrada':
+                        new_stock = current_stock + quantity
+                    else: # Salida
+                        new_stock = current_stock - quantity
+                    
+                    success_update, error_update = db_execute(
+                        "UPDATE products SET quantity = ? WHERE id = ?",
+                        (new_stock, product_id)
+                    )
+                    
+                    if success_update:
+                        st.success(f"Movimiento '{movement_type}' de {quantity} unidad(es) de '{product_name}' registrado.")
+                        st.balloons()
+                        st.rerun() # Recargar para reflejar el nuevo stock
+                    else:
+                        st.error(f"Error al actualizar stock: {error_update}. Contacte al administrador.")
                 else:
-                    st.error(f"Error al actualizar stock: {error_update}")
+                    st.error(f"Error al registrar movimiento: {error}")
 
     st.markdown("---")
     
@@ -551,12 +604,12 @@ def manage_movements():
     """
     df_movements = db_fetch(query)
     
-    # Aplicar colores
+    # Aplicar colores para diferenciar
     def style_movements(row):
         if row['type'] == 'Entrada':
-            return ['background-color: #e8f5e9'] * len(row) # Verde claro
+            return ['background-color: #e8f5e9; color: #388e3c'] * len(row) # Verde claro
         elif row['type'] == 'Salida':
-            return ['background-color: #ffebee'] * len(row) # Rojo claro
+            return ['background-color: #ffebee; color: #d32f2f'] * len(row) # Rojo claro
         return [''] * len(row)
 
     st.dataframe(
@@ -564,34 +617,41 @@ def manage_movements():
         use_container_width=True
     )
 
+
 def manage_suppliers():
-    """Página para la gestión (CRUD) de proveedores."""
-    st.title("🏭 Gestión de Proveedores")
+    """Página para la gestión (CRUD COMPLETO) de proveedores."""
+    st.title("🏭 Gestión de Proveedores (CRUD Completo)")
     
-    # --- Formulario de Gestión ---
-    with st.expander("➕ Agregar/Editar Proveedor", expanded=False):
-        with st.form("supplier_form", clear_on_submit=True):
-            st.subheader("Datos del Proveedor")
+    df_suppliers = db_fetch("SELECT * FROM suppliers")
+    
+    # --- Formulario de Agregar (Ventana Emergente Simulado) ---
+    with st.expander("➕ Crear Nuevo Proveedor", expanded=False):
+        st.subheader("Datos de Creación Rápida")
+        with st.form("add_supplier_form", clear_on_submit=True):
             
-            name = st.text_input("Nombre / Razón Social *")
-            nit = st.text_input("NIT o Identificación")
-            contact_person = st.text_input("Persona de Contacto")
-            email = st.text_input("Correo Electrónico")
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Nombre / Razón Social *")
+            nit = c2.text_input("NIT o Identificación (Único)")
+            
+            c3, c4 = st.columns(2)
+            contact_person = c3.text_input("Persona de Contacto")
+            email = c4.text_input("Correo Electrónico")
+            
             avg_delivery_time_days = st.number_input("Tiempo de Entrega Promedio (días)", min_value=0, step=1)
             
-            submitted = st.form_submit_button("Guardar Proveedor")
+            submitted = st.form_submit_button("✅ Guardar Proveedor", type="primary")
             
             if submitted:
                 if not name:
                     st.error("El nombre del proveedor es obligatorio.")
                 else:
-                    # (Aquí iría lógica para INSERT O UPDATE si se selecciona uno existente)
                     success, error = db_execute(
                         "INSERT INTO suppliers (name, nit, contact_person, email, avg_delivery_time_days) VALUES (?, ?, ?, ?, ?)",
                         (name, nit, contact_person, email, avg_delivery_time_days)
                     )
                     if success:
-                        st.success(f"Proveedor '{name}' agregado.")
+                        st.success(f"Proveedor '{name}' agregado exitosamente.")
+                        st.rerun()
                     else:
                         if "UNIQUE constraint failed" in error:
                             st.error(f"Error: El NIT '{nit}' ya está registrado.")
@@ -600,10 +660,79 @@ def manage_suppliers():
     
     st.markdown("---")
     
-    # --- Lista de Proveedores ---
-    st.subheader("Lista de Proveedores")
-    df_suppliers = db_fetch("SELECT * FROM suppliers")
-    st.dataframe(df_suppliers, use_container_width=True)
+    # --- Lista, Edición y Eliminación ---
+    st.subheader("Lista, Edición y Eliminación de Proveedores")
+    
+    if df_suppliers.empty:
+        st.info("Aún no hay proveedores registrados.")
+        return
+
+    # Selector para Edición/Eliminación
+    supplier_names = df_suppliers['name'].tolist()
+    supplier_selection = st.selectbox("Seleccione el Proveedor a Editar/Eliminar", supplier_names)
+    
+    if supplier_selection:
+        selected_supplier = df_suppliers[df_suppliers['name'] == supplier_selection].iloc[0]
+        supplier_id = selected_supplier['id']
+
+        # --- Formulario de Edición (Simulado Pop-up) ---
+        with st.expander(f"✍️ Editar Detalles de: {supplier_selection}", expanded=True):
+            with st.form("edit_supplier_form", clear_on_submit=False):
+                
+                col_e1, col_e2 = st.columns(2)
+                edit_name = col_e1.text_input("Nombre / Razón Social *", value=selected_supplier['name'], key="e_name")
+                edit_nit = col_e2.text_input("NIT o Identificación", value=selected_supplier['nit'], key="e_nit")
+                
+                col_e3, col_e4 = st.columns(2)
+                edit_contact_person = col_e3.text_input("Persona de Contacto", value=selected_supplier['contact_person'], key="e_contact")
+                edit_email = col_e4.text_input("Correo Electrónico", value=selected_supplier['email'], key="e_email")
+                
+                edit_avg_delivery = st.number_input("Tiempo de Entrega Promedio (días)", min_value=0, step=1, 
+                                                    value=int(selected_supplier['avg_delivery_time_days'] or 0), key="e_avg_days")
+                
+                update_submitted = st.form_submit_button("Actualizar Detalles", type="primary")
+                
+                if update_submitted:
+                    if not edit_name:
+                        st.error("El nombre del proveedor es obligatorio.")
+                    else:
+                        success, error = db_execute(
+                            """
+                            UPDATE suppliers SET name = ?, nit = ?, contact_person = ?, email = ?, avg_delivery_time_days = ?
+                            WHERE id = ?
+                            """,
+                            (edit_name, edit_nit, edit_contact_person, edit_email, edit_avg_delivery, supplier_id)
+                        )
+                        if success:
+                            st.success(f"Proveedor '{edit_name}' actualizado exitosamente.")
+                            st.rerun()
+                        else:
+                            st.error(f"Error al actualizar: {error}")
+                            
+            # Botón de eliminación (fuera del formulario, dentro del expander de acción)
+            st.markdown("---")
+            st.warning("Zona de peligro: la eliminación es permanente.")
+            if st.button(f"🗑️ Eliminar Proveedor: {supplier_selection}", type="secondary"):
+                # Antes de eliminar, verificar si hay productos asociados
+                products_count_df = db_fetch("SELECT COUNT(*) as count FROM products WHERE supplier_id = ?", (supplier_id,))
+                products_count = products_count_df['count'].iloc[0] if not products_count_df.empty else 0
+                
+                if products_count > 0:
+                    st.error(f"❌ Error: No se puede eliminar. Este proveedor está asociado a {products_count} producto(s). Primero debe editar esos productos y asignarles otro proveedor o eliminarlos.")
+                else:
+                    success, error = db_execute("DELETE FROM suppliers WHERE id = ?", (supplier_id,))
+                    if success:
+                        st.success(f"Proveedor '{supplier_selection}' eliminado exitosamente.")
+                        st.rerun()
+                    else:
+                        st.error(f"Error al eliminar: {error}")
+                        
+        st.markdown("---")
+    
+    # Mostrar la lista completa (después de la edición/eliminación)
+    df_updated_suppliers = db_fetch("SELECT * FROM suppliers")
+    st.dataframe(df_updated_suppliers, use_container_width=True)
+
 
 def show_reports():
     """Página para generar y descargar reportes, con opción CSV/Excel y filtros."""
@@ -628,7 +757,7 @@ def show_reports():
         ORDER BY p.name
         """
         df_report = db_fetch(query)
-        st.dataframe(df_report, use_container_width=True) # Mostrar aquí si no es el de valor
+        st.dataframe(df_report, use_container_width=True) 
     
     elif report_type == "Valor Total del Inventario":
         st.subheader("Reporte de Valor Total del Inventario")
@@ -649,15 +778,16 @@ def show_reports():
             'Cantidad': ['---'], 'Costo Unitario': ['**TOTAL**'], 
             'Valor Total': [f"**{total_value:,.2f}**"]
         })
-        df_display = pd.concat([df_report, total_row], ignore_index=True)
-        st.dataframe(df_display, use_container_width=True) # Mostrar el display DF
+        # Solo para mostrar, el DF para exportar (df_report) no incluye esta fila.
+        df_display = pd.concat([df_report.astype(str), total_row], ignore_index=True)
+        st.dataframe(df_display, use_container_width=True)
 
     elif report_type == "Movimientos Históricos":
         st.subheader("Reporte de Movimientos Históricos (Filtro por Fecha)")
         
         # Filtro de fecha
         col_start, col_end = st.columns(2)
-        default_start = datetime.now().replace(day=1) # Primer día del mes
+        default_start = datetime.now().replace(day=1) 
         default_end = datetime.now()
         
         start_date = col_start.date_input("Fecha Inicio", value=default_start)
@@ -679,7 +809,7 @@ def show_reports():
         ORDER BY m.date DESC
         """
         df_report = db_fetch(query)
-        st.dataframe(df_report, use_container_width=True) # Mostrar aquí
+        st.dataframe(df_report, use_container_width=True) 
 
     # --- Botones de Descarga ---
     if not df_report.empty:
@@ -687,11 +817,10 @@ def show_reports():
         
         col_excel, col_csv = st.columns(2)
 
-        # Descargar Excel (Requiere 'openpyxl' instalado)
+        # Descargar Excel 
         output_excel = io.BytesIO()
         try:
-            with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
-                # Nota: Si el reporte es 'Valor Total', df_report NO incluye la fila de total
+            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer: 
                 df_report.to_excel(writer, index=False, sheet_name='Reporte')
             
             col_excel.download_button(
@@ -701,7 +830,7 @@ def show_reports():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except ImportError:
-            col_excel.info("Instale 'openpyxl' (`pip install openpyxl`) para habilitar la descarga a Excel.")
+            col_excel.info("Instale 'openpyxl' o 'xlsxwriter' (`pip install xlsxwriter`) para la descarga a Excel.")
 
         # Descargar CSV
         csv = df_report.to_csv(index=False).encode('utf-8')
@@ -713,7 +842,6 @@ def show_reports():
         )
         
         st.markdown("---")
-        # Botón de impresión (simulado, solo muestra un mensaje)
         if st.button("🖨️ Imprimir Reporte (Simulación)"):
             st.info("La función de impresión directa no está soportada. Por favor, use la función de impresión de su navegador (Ctrl+P) o descargue el Excel/CSV.")
 
@@ -737,21 +865,26 @@ def run_main_app():
             "Generación de Reportes"
         ]
 
-        menu_selection = st.radio("Menú Principal", menu_options, key="menu_selection")
+        if 'menu_selection' not in st.session_state:
+            st.session_state.menu_selection = "Panel Principal"
+
+        menu_selection = st.radio("Menú Principal", menu_options, key="menu_selection_widget")
+        st.session_state.menu_selection = menu_selection
         
     # --- Enrutador de Páginas ---
-    if menu_selection == "Panel Principal":
+    if st.session_state.menu_selection == "Panel Principal":
         show_dashboard()
-    elif menu_selection == "Gestión de Productos":
+    elif st.session_state.menu_selection == "Gestión de Productos":
         manage_products()
-    elif menu_selection == "Gestión de Movimientos":
+    elif st.session_state.menu_selection == "Gestión de Movimientos":
         manage_movements()
-    elif menu_selection == "Gestión de Proveedores":
+    elif st.session_state.menu_selection == "Gestión de Proveedores":
         manage_suppliers()
-    elif menu_selection == "Generación de Reportes":
+    elif st.session_state.menu_selection == "Generación de Reportes":
         show_reports()
 
 # --- Punto de Entrada de la Aplicación ---
 if __name__ == "__main__":
-    init_db() # Asegura que la BD y las tablas existan
-    run_main_app() # Ejecuta la app directamente
+    init_db() 
+    run_main_app() 
+
